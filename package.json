@@ -1,0 +1,36 @@
+{
+  "name": "kuaishou-ops",
+  "version": "1.4.0",
+  "private": true,
+  "description": "快手一体化插件：刷视频/回评论/点赞/发布 + 本地视频流水线（背景/字体/语音可自定义）+ 可编辑提示词库 + 总开关与环境自检。",
+  "type": "module",
+  "main": "./src/mcp.mjs",
+  "bin": {
+    "ksops": "./cli.mjs"
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\"",
+    "start": "node src/mcp.mjs",
+    "cli": "node cli.mjs",
+    "doctor": "node cli.mjs doctor",
+    "smoke": "node test/mcp-smoke.mjs",
+    "web-login": "node cli.mjs web-login",
+    "web-e2e": "node test/web-e2e.mjs",
+    "prompt:list": "node cli.mjs prompt list",
+    "video:e2e": "node test/video-e2e.mjs",
+    "audit": "node test/audit.mjs",
+    "video:bg": "node test/video-bg-e2e.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.5",
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
+    "@ffprobe-installer/ffprobe": "^2.1.2",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "js-yaml": "^5.5.0",
+    "playwright-core": "^1.64.1",
+    "zod": "^4.4.3"
+  }
+}
