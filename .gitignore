@@ -1,0 +1,11 @@
+﻿# 运行期数据（含 Edge 登录态、上传素材、成片）不上传
+state/
+.web-profile*/
+demo/
+*.mp4
+*.wav
+*.mp3
+*.log
+node_modules/
+.DS_Store
+Thumbs.db
