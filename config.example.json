@@ -1,0 +1,172 @@
+{
+  "mode": "auto",
+  "web": {
+    "browserPath": "",
+    "headless": false,
+    "profileDir": ".web-profile",
+    "width": 1600,
+    "height": 1000,
+    "settleMs": 3000
+  },
+  "adbPath": "",
+  "serial": "",
+  "pkg": "com.smile.gifmaker",
+  "launcherActivity": "com.yxcorp.gifshow.HomeActivity",
+  "timeouts": {
+    "shell": 20000,
+    "dump": 15000,
+    "launch": 30000
+  },
+  "dwell": {
+    "minMs": 6000,
+    "maxMs": 22000
+  },
+  "jitter": {
+    "tapPx": 14,
+    "sleepPct": 0.3,
+    "swipeDurMin": 220,
+    "swipeDurMax": 420
+  },
+  "quotas": {
+    "scrollPerRun": 30,
+    "replyPerRun": 8,
+    "likePerRun": 5,
+    "publishPerDay": 2,
+    "runGapMs": 900000
+  },
+  "reply": {
+    "minChars": 2,
+    "maxChars": 60,
+    "blacklist": [
+      "加微信",
+      "私信我",
+      "互粉",
+      "返现",
+      "引流",
+      "刷赞",
+      "代运营"
+    ],
+    "whitelist": [
+      "?",
+      "？",
+      "怎么",
+      "什么",
+      "哪",
+      "求",
+      "吗",
+      "有没有",
+      "推荐"
+    ],
+    "ignore": [
+      "说点什么",
+      "留下你的评论",
+      "发送",
+      "回复",
+      "展开",
+      "收起",
+      "暂时没有评论"
+    ]
+  },
+  "publish": {
+    "videoExt": [
+      ".mp4",
+      ".mov",
+      ".mkv"
+    ],
+    "captionMax": 120,
+    "topicsMax": 5,
+    "deviceDir": "/sdcard/DCIM/Camera",
+    "imePackage": "com.android.adbkeyboard",
+    "imeId": "com.android.adbkeyboard/.AdbIME"
+  },
+  "stateFile": "state/ops-state.json",
+  "dryRun": false,
+  "selectors": {
+    "tabHome": {
+      "text": [
+        "首页"
+      ],
+      "res": []
+    },
+    "tabProfile": {
+      "text": [
+        "我"
+      ],
+      "res": []
+    },
+    "commentEntry": {
+      "text": [
+        "评论",
+        "写评论",
+        "说点什么"
+      ],
+      "res": []
+    },
+    "commentList": {
+      "res": [
+        "com.smile.gifmaker:id/comment_list"
+      ],
+      "cls": [
+        "androidx.recyclerview.widget.RecyclerView"
+      ]
+    },
+    "commentReplyAction": {
+      "text": [
+        "回复"
+      ]
+    },
+    "commentInput": {
+      "text": [
+        "说点什么",
+        "回复 @",
+        "留下你的评论"
+      ],
+      "res": []
+    },
+    "sendButton": {
+      "text": [
+        "发送"
+      ]
+    },
+    "publishEntry": {
+      "text": [
+        "拍摄",
+        "+",
+        "发布"
+      ],
+      "res": []
+    },
+    "albumPick": {
+      "text": [
+        "相册",
+        "从相册选择",
+        "上传"
+      ]
+    },
+    "publishNext": {
+      "text": [
+        "下一步",
+        "下一步(1/2)"
+      ]
+    },
+    "publishConfirm": {
+      "text": [
+        "发布"
+      ]
+    },
+    "captionBox": {
+      "text": [
+        "添加作品描述",
+        "说点什么",
+        "标题"
+      ]
+    },
+    "back": {
+      "text": [],
+      "res": [],
+      "desc": [
+        "返回"
+      ]
+    }
+  }
+}
