@@ -215,6 +215,78 @@ export class Kuaishou {
     return { replied: content, matched: target.text };
   }
 
+  /**
+   * 用表情包回评论（App 端）。
+   *
+   * 说明：脚本**没法把本地图片塞进快手的表情面板** —— 面板里是你在 App 里自己收藏的表情包。
+   * 所以这里做的是：打开评论框 → 填文字（append 模式）→ 点「表情」入口 → 在面板里点一张
+   * 你收藏的表情包。入口或面板找不到就降级成纯文本回复，发了什么看返回里的 stickerSent：
+   *   image         面板里点到了一张图
+   *   none          没找到表情入口/面板，只发了文字（如实说，不装成功）
+   */
+  async replyWithSticker({ match, content = '', mode = 'append', openPanel = true, stickerIndex = -1 } = {}) {
+    if (!match) throw new StepError('match 不能为空', { step: 'replyWithSticker' });
+    if (mode !== 'only' && content) this.assertReplyText(content);
+    if (openPanel) await this.openComments();
+    const nodes0 = await this.nodes();
+    const target = findNodes(nodes0, { text: [match] })[0];
+    if (!target) {
+      await this.closeComments();
+      throw new StepError(`评论列表里找不到包含「${match}」的评论`, {
+        step: 'replyWithSticker',
+        screen: summarize(nodes0),
+        hint: '先 ks_comments 看当前可选评论，再挑一条'
+      });
+    }
+    await this.tapNode(target);
+    await this.sleep(500);
+
+    const box = await this.require(this.cfg.selectors.commentInput, { step: 'replyWithSticker', clickableOnly: true, what: '评论输入框' });
+    await this.tapNode(box, { jitterPx: 0 });
+    await this.sleep(300);
+    if (mode !== 'only' && content) {
+      await this.adb.inputText(content, { imeId: this.cfg.publish.imeId, imePackage: this.cfg.publish.imePackage });
+      await this.sleep(300);
+    }
+
+    // 表情入口 → 面板 → 点一张（面板在屏幕下半，挑可点的 ImageView，跳过头像区）
+    let stickerSent = 'none';
+    let stickerNote = '';
+    try {
+      const spec = this.cfg.selectors.commentEmojiEntry;
+      const nodes1 = await this.nodes();
+      const entry = findNodes(nodes1, spec).filter((n) => n.clickable)[0] ?? findNodes(nodes1, spec)[0];
+      if (!entry) {
+        stickerNote = '没找到表情入口（可在 config.selectors.commentEmojiEntry 里补选择器）';
+      } else {
+        await this.tapNode(entry);
+        await this.sleep(700);
+        const { height } = await this.screenSize();
+        const nodes2 = await this.nodes();
+        const cells = nodes2.filter((n) =>
+          /ImageView/.test(n.className || '') && n.clickable && n.bounds.cy > height * 0.5 && n.bounds.width > 40);
+        if (!cells.length) {
+          stickerNote = '表情面板里没有可点的表情包（先在 App 里收藏几张）';
+        } else {
+          const idx = Number.isInteger(stickerIndex) && stickerIndex >= 0 && stickerIndex < cells.length
+            ? stickerIndex
+            : Math.floor(this.random() * cells.length);
+          await this.tapNode(cells[idx]);
+          await this.sleep(400);
+          stickerSent = 'image';
+        }
+      }
+    } catch (error) {
+      stickerNote = `点表情包失败：${error.message}`;
+    }
+
+    const send = await this.require(this.cfg.selectors.sendButton, { step: 'replyWithSticker', clickableOnly: true, what: '发送按钮' });
+    await this.tapNode(send);
+    await this.sleep(800);
+    if (openPanel) await this.closeComments();
+    return { replied: content, matched: target.text, stickerSent, stickerNote };
+  }
+
   /** 文案红线：长度、拉黑词、纯空白。 */
   assertReplyText(content) {
     const s = String(content ?? '').trim();
@@ -225,11 +297,21 @@ export class Kuaishou {
     return s;
   }
 
-  /** 这条评论值不值得回：命中 whitelist 且不命中 blacklist。 */
+  /**
+   * 这条评论值不值得回。
+   * 规则：黑名单一律跳过；命中【标签白名单】直接放行；否则看关键词白名单。
+   */
   shouldReply(text) {
     const t = String(text ?? '').trim();
     if (t.length < this.cfg.reply.minChars) return false;
+    // 纯表情 / 纯符号：白名单留空（=全回）之后会漏进来，必须挡掉
+    if (!/[\u4e00-\u9fa5A-Za-z0-9]/.test(t)) return false;
     if (this.cfg.reply.blacklist.some((w) => w && t.includes(w))) return false;
+
+    // 标签白名单：话题/类别标签命中即可回
+    const tags = this.cfg.reply.tagWhitelist ?? [];
+    if (tags.length && tags.some((tag) => tag && t.includes(tag))) return true;
+
     const wl = this.cfg.reply.whitelist;
     if (!wl || wl.length === 0) return true;
     return wl.some((w) => (w === '?' || w === '？' ? /[?？]/.test(t) : t.includes(w)));

@@ -9,7 +9,7 @@ const root = path.resolve('.');
 const lib = new PromptLibrary({ cfg: { prompts: { dir: 'prompts', customDir: 'state/prompts' } }, root });
 
 test('内置人设预设齐全且都能渲染', () => {
-  const ids = ['persona-whale-maid', 'persona', 'persona-cool', 'persona-warm', 'persona-sharp'];
+  const ids = ['persona-cetacea', 'persona-whale-maid', 'persona', 'persona-cool', 'persona-warm', 'persona-sharp'];
   for (const id of ids) {
     const p = lib.get(id);
     assert.ok(p.title.length > 0, `${id} 缺标题`);
@@ -20,8 +20,8 @@ test('内置人设预设齐全且都能渲染', () => {
   }
 });
 
-test('五个人设的说话风格互不相同', () => {
-  const ids = ['persona-whale-maid', 'persona', 'persona-cool', 'persona-warm', 'persona-sharp'];
+test('六个人设的说话风格互不相同', () => {
+  const ids = ['persona-cetacea', 'persona-whale-maid', 'persona', 'persona-cool', 'persona-warm', 'persona-sharp'];
   const bodies = ids.map((id) => lib.get(id).body);
   assert.equal(new Set(bodies).size, ids.length);
 });
@@ -41,10 +41,19 @@ test('applySettingsOverrides: personaOverride 原样保留，空串也允许清�
   assert.equal(cfg.prompts.personaOverride, '');
 });
 
-test('默认值：鲸鱼女仆娘 + 无覆盖', () => {
+test('默认值：鲸鱼女孩 CETACEA_LOLI + 无覆盖', () => {
   const cfg = structuredClone(DEFAULTS);
-  assert.equal(cfg.prompts.active.persona, 'persona-whale-maid');
+  assert.equal(cfg.prompts.active.persona, 'persona-cetacea');
   assert.equal(cfg.prompts.personaOverride, '');
+});
+
+test('新人设：鲸鱼女孩的关键标签都在，并且写明"不是真人"', () => {
+  const body = lib.get('persona-cetacea').body;
+  for (const kw of ['鲸鱼', '尾鳍', '米饭', '懒', '傲娇', /中文网感|网感/]) {
+    if (kw instanceof RegExp) assert.match(body, kw);
+    else assert.match(body, new RegExp(kw));
+  }
+  assert.match(body, /不是真人|AI/);
 });
 
 test('鲸鱼女仆娘人设：女仆语气 + 禁区齐全，且不含性暗示', () => {
@@ -58,5 +67,5 @@ test('鲸鱼女仆娘人设：女仆语气 + 禁区齐全，且不含性暗示',
 
 test('loadConfig 读到 personaId 覆盖', () => {
   const cfg = loadConfig({ file: path.join(process.cwd(), 'config.json'), env: {} });
-  assert.ok(['persona-whale-maid', 'persona', 'persona-cool', 'persona-warm', 'persona-sharp'].includes(cfg.prompts.active.persona));
+  assert.ok(['persona-cetacea', 'persona-whale-maid', 'persona', 'persona-cool', 'persona-warm', 'persona-sharp'].includes(cfg.prompts.active.persona));
 });

@@ -89,8 +89,14 @@ test('AssetServer: 超过大小上限被拒，临时文件被清掉', async () =
   try {
     const res = await fetch(`http://127.0.0.1:${port}/upload?name=big.mp3`, { method: 'POST', body: Buffer.alloc(64) }).catch((e) => ({ status: 0, json: async () => ({ error: e.message }) }));
     assert.notEqual(res.status, 200);
-    const leftovers = fs.readdirSync(dir).filter((f) => f.startsWith('.upload-'));
-    assert.equal(leftovers.length, 0, '不应留下临时文件');
+    // 清理是响应结束后异步做的，给最多 2 秒收敛，别跟实现细节抢时序
+    let leftovers = [];
+    for (let i = 0; i < 20; i++) {
+      leftovers = fs.readdirSync(dir).filter((f) => f.startsWith('.upload-'));
+      if (leftovers.length === 0) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    assert.equal(leftovers.length, 0, `不应留下临时文件：${leftovers.join(',')}`);
   } finally {
     await s.stop();
     fs.rmSync(dir, { recursive: true, force: true });

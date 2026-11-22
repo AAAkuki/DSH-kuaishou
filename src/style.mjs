@@ -8,8 +8,8 @@
 export const STYLE_DEFAULTS = {
   callUser: '主人',       // 怎么称呼对方
   callSelf: '我',         // 怎么自称
-  tone: 'gentle',         // gentle | calm | sharp | lively | pro
-  catchphrases: '',       // 口头禅，逗号分隔
+  tone: 'lively',         // gentle | calm | sharp | lively | pro
+  catchphrases: '啧,诶嘿,懒得动,圆滚滚地滚过来了',  // 口头禅，逗号分隔
   maxChars: 40,           // 一次回复最多多少字
   useEmoji: true,         // 用不用 emoji/表情
   useTilde: true,         // 用不用「～」

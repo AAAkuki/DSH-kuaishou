@@ -1,7 +1,10 @@
 # 视频标题
 
 主题：{{topic}}
-账号人设：{{personaSummary}}
+账号人设：
+
+{{personaSummary}}
+
 平台：{{platform}}
 
 ## 要求

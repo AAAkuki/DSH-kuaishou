@@ -1,7 +1,16 @@
 {
   "name": "kuaishou-ops",
-  "version": "1.4.0",
+  "version": "3.53.0",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AAAkuki/DSH-kuaishou.git"
+  },
+  "homepage": "https://github.com/AAAkuki/DSH-kuaishou#readme",
+  "bugs": {
+    "url": "https://github.com/AAAkuki/DSH-kuaishou/issues"
+  },
+  "license": "UNLICENSED",
   "description": "快手一体化插件：刷视频/回评论/点赞/发布 + 本地视频流水线（背景/字体/语音可自定义）+ 可编辑提示词库 + 总开关与环境自检。",
   "type": "module",
   "main": "./src/mcp.mjs",
@@ -9,7 +18,7 @@
     "ksops": "./cli.mjs"
   },
   "scripts": {
-    "test": "node --test \"test/*.test.mjs\"",
+    "test": "node --test --test-concurrency=2 \"test/*.test.mjs\"",
     "start": "node src/mcp.mjs",
     "cli": "node cli.mjs",
     "doctor": "node cli.mjs doctor",
@@ -19,7 +28,20 @@
     "prompt:list": "node cli.mjs prompt list",
     "video:e2e": "node test/video-e2e.mjs",
     "audit": "node test/audit.mjs",
-    "video:bg": "node test/video-bg-e2e.mjs"
+    "video:bg": "node test/video-bg-e2e.mjs",
+    "guard": "node tools/profile-guard.mjs check",
+    "guard:restore": "node tools/profile-guard.mjs restore",
+    "guard:snapshot": "node tools/profile-guard.mjs snapshot",
+    "demo": "node tools/render-demo.mjs",
+    "validate": "node tools/validate-settings.mjs",
+    "check:sync": "node tools/check-sync.mjs",
+    "stickers:matte": "python tools/rematte-stickers.py",
+    "template:enhance": "python tools/enhance-template.py",
+    "bg:blur": "node tools/set-bg-blur.mjs",
+    "own:comments": "node tools/own-comments-check.mjs",
+    "own:reply-dry": "node tools/own-reply-dry.mjs",
+    "demo:live": "node tools/render-demo.mjs 16 journal --live-stats",
+    "slang": "node tools/slang-list.mjs"
   },
   "engines": {
     "node": ">=20"

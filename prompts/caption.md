@@ -2,7 +2,10 @@
 
 视频：{{videoTitle}}
 内容摘要：{{summary}}
-账号人设：{{personaSummary}}
+账号人设：
+
+{{personaSummary}}
+
 平台：{{platform}}
 
 ## 要求

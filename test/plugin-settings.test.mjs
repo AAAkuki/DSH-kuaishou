@@ -78,7 +78,7 @@ test('applySettingsOverrides: 空对象/坏输入不影响 cfg', () => {
   applySettingsOverrides(cfg, null);
   applySettingsOverrides(cfg, {});
   assert.equal(cfg.mode, 'auto');
-  assert.equal(cfg.quotas.scrollPerRun, 30);
+  assert.equal(cfg.quotas.scrollPerRun, 0, '0 = 不限');
 });
 
 test('loadConfig: 会读 state/settings.json 覆盖层，坏文件则忽略', () => {

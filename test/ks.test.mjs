@@ -90,7 +90,11 @@ test('shouldReply: 广告词被拦，提问被放行', () => {
   assert.equal(ks.shouldReply('这个怎么做的？'), true);
   assert.equal(ks.shouldReply('加微信领资料'), false);
   assert.equal(ks.shouldReply('好'), false); // 短于 minChars=2? 单字被拦
-  assert.equal(ks.shouldReply('太牛了'), false); // 不含互动意图，不主动搭话
+  // 白名单已放宽到"可附和型"：夸奖/认同类评论也能回（真实评论里这类占多数）
+  assert.equal(ks.shouldReply('太牛了'), true);
+  assert.equal(ks.shouldReply('说的太经典了'), true);
+  // 纯表情/过短仍然跳过
+  assert.equal(ks.shouldReply('😀'), false);
   assert.equal(ks.shouldReply('求推荐几个'), true);
 });
 

@@ -64,12 +64,15 @@ const ENUM_HINT = {
   mode: 'web', personaId: 'persona', videoBgPreset: 'whale-blue', videoBgFit: 'cover',
   videoBgGradientAxis: 'vertical', videoTtsEngine: 'sapi', speakTone: 'gentle'
 };
+const dict = plugin.Config?.dict ?? {};
 const sample = {};
 for (const k of configKeys) {
   const type = kindOf(k);
+  const def = dict[k]?.meta?.default;
   if (type === 'boolean') sample[k] = true;
-  else if (type === 'number') sample[k] = 7;
-  else sample[k] = ENUM_HINT[k] ?? 'X';
+  // 数值字段优先用 schema 默认值（有些字段有范围，7 会被业务校验丢掉造成误报）
+  else if (type === 'number') sample[k] = typeof def === 'number' ? (def === 0 ? 3 : def) : 7;
+  else sample[k] = ENUM_HINT[k] ?? (typeof def === 'string' && def ? def : 'X');
 }
 const persisted = plugin.toSettingsJson(sample);
 const NOT_PERSISTED = new Set(['assetsPort', 'assetsDir', 'assetsMaxMB']); // 仅插件自用，MCP 不需要

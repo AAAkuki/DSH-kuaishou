@@ -89,7 +89,7 @@ test('设置页 flat 键能覆盖 cfg.style（含布尔与别名）', () => {
 test('非法语气回落到默认，字数越界被夹住', () => {
   const cfg = structuredClone(DEFAULTS);
   applySettingsOverrides(cfg, { speakTone: 'evil', speakMaxChars: 9999 });
-  assert.equal(cfg.style.tone, 'gentle');
+  assert.equal(cfg.style.tone, 'lively');
   assert.equal(cfg.style.maxChars, 500);
 });
 

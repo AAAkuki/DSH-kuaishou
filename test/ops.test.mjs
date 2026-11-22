@@ -71,11 +71,27 @@ test('makePlan 按剩余配额生成，超额不生成', () => {
   const file = tmpStateFile();
   const s = new OpsState({ file }).load();
   const cfg = freshConfig();
-  let plan = makePlan({ quotas: cfg.quotas, state: s, random: () => 0.9 });
+  // 这个用例要测"配额用完就不排"，所以给个明确条数（默认 0 = 不限）
+  const quotas = { ...cfg.quotas, scrollPerRun: 5 };
+  let plan = makePlan({ quotas, state: s, random: () => 0.9 });
   assert.deepEqual(plan.map((p) => p.kind), ['scroll', 'reply', 'like']);
-  s.add('scroll', cfg.quotas.scrollPerRun);
-  plan = makePlan({ quotas: cfg.quotas, state: s, random: () => 0.9 });
+  s.add('scroll', quotas.scrollPerRun);
+  plan = makePlan({ quotas, state: s, random: () => 0.9 });
   assert.deepEqual(plan.map((p) => p.kind), ['reply', 'like']);
+  if (fs.existsSync(file)) fs.unlinkSync(file);
+});
+
+test('配额 0 = 不限：刷视频永远排得上', () => {
+  const file = tmpStateFile();
+  const s = new OpsState({ file }).load();
+  const cfg = freshConfig();
+  const quotas = { ...cfg.quotas, scrollPerRun: 0, replyPerRun: 0 };
+  s.add('scroll', 500);
+  s.add('reply', 500);
+  const plan = makePlan({ quotas, state: s, random: () => 0.9 });
+  const kinds = plan.map((p) => p.kind);
+  assert.ok(kinds.includes('scroll'), `不限额度时还应该排刷视频：${kinds}`);
+  assert.ok(kinds.includes('reply'), `不限额度时还应该排回评论：${kinds}`);
   if (fs.existsSync(file)) fs.unlinkSync(file);
 });
 

@@ -91,6 +91,15 @@ export async function synthesizeSapi({ text, out, voice = '', rate = 0 } = {}) {
     fs.rmSync(ps1, { force: true });
   }
   if (!fs.existsSync(target) || fs.statSync(target).size < 100) {
+    // 最常见的真因：语音语言与文本语言不匹配（英文语音读中文吐不出音频）。
+    // 直接说"语音不可用"会让人以为语音坏了，其实换一个同语言语音就行。
+    const picked = avail.find((v) => v.name === voice);
+    const hasCjk = /[\u4e00-\u9fa5]/.test(sentence);
+    const culture = (picked?.culture || '').toLowerCase();
+    if (hasCjk && culture && !culture.startsWith('zh')) {
+      const zh = avail.filter((v) => /^zh/i.test(v.culture || '')).map((v) => v.name);
+      throw new TtsError(`语音语言不匹配：「${voice}」是 ${picked.culture}（${culture.startsWith('en') ? '英文' : '非中文'}）语音，读不了中文文本。${zh.length ? `中文语音请用：${zh.join(' / ')}` : '系统里没装中文语音，先去 Windows 设置装一个中文语音包'}`);
+    }
     throw new TtsError('SAPI 没有生成有效 wav（检查语音是否可用）');
   }
   return { file: target, bytes: fs.statSync(target).size, engine: 'sapi', voice: voice || '(默认)' };

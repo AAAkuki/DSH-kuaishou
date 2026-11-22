@@ -1,7 +1,11 @@
 # 口播脚本
 
 主题：{{topic}}
-账号人设：{{personaSummary}}
+
+账号人设：
+
+{{personaSummary}}
+
 目标时长：约 {{durationSec}} 秒（中文口播约 4.5 字/秒，所以总字数 ≈ {{targetChars}} 字）
 平台：{{platform}}
 

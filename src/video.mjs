@@ -60,8 +60,20 @@ export function runBin(cmd, args, { timeoutMs = 600000 } = {}) {
     child.on('error', (e) => { clearTimeout(timer); reject(new VideoError(`无法启动 ${cmd}：${e.message}`, { cmd })); });
     child.on('close', (code) => {
       clearTimeout(timer);
-      if (code !== 0) reject(new VideoError(`${path.basename(cmd)} 退出码 ${code}`, { cmd: [cmd, ...args].join(' '), stderr: err }));
-      else resolve({ stdout: out, stderr: err });
+      if (code !== 0) {
+        // 把 ffmpeg 常见失败原因翻译成可操作的话，而不是只说"退出码 1"
+        let hint = '';
+        if (/Permission denied|拒绝访问|being used by another process/i.test(err)) {
+          hint = '：输出文件被占用或只读（可能正在播放器里打开着，或同名的旧文件被锁）。换个输出文件名，或先关掉打开它的程序';
+        } else if (/No such file or directory|could not open/i.test(err) && /Output|output/i.test(err)) {
+          hint = '：输出目录不存在或没有写权限';
+        } else if (/Invalid data found|moov atom not found/i.test(err)) {
+          hint = '：输入视频损坏或还没下载完整';
+        } else if (/Unknown encoder|Encoder .* not found/i.test(err)) {
+          hint = '：ffmpeg 缺少对应编码器（换内置版本或改配置）';
+        }
+        reject(new VideoError(`${path.basename(cmd)} 退出码 ${code}${hint}`, { cmd: [cmd, ...args].join(' '), stderr: err }));
+      } else resolve({ stdout: out, stderr: err });
     });
   });
 }
@@ -209,6 +221,23 @@ export class VideoStudio {
     this._tmpFiles = [];
   }
 
+  /**
+   * 清理过期的生成中间件（voice-*.wav / cover-*.jpg 保留最近 N 份）。
+   * 之前每次生成都留一个 wav 和一张封面，实测 21 个 wav 占了 ~15MB。
+   */
+  pruneWorkDir({ keepWav = 3, keepCover = 5 } = {}) {
+    try {
+      const dir = this.workDir();
+      const pick = (re) => fs.readdirSync(dir).filter((f) => re.test(f)).map((f) => path.join(dir, f))
+        .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+      for (const f of pick(/^voice-\d+\.wav$/).slice(keepWav)) fs.rmSync(f, { force: true });
+      // 试听也会生成 preview-*.wav，同样要清理（否则点几次试听就堆一堆）
+      for (const f of pick(/^preview-\d+\.wav$/).slice(keepWav)) fs.rmSync(f, { force: true });
+      for (const f of pick(/^cover-\d+\.jpg$/).slice(keepCover)) fs.rmSync(f, { force: true });
+      return true;
+    } catch { return false; }
+  }
+
   async version() {
     this.assertAvailable();
     const r = await runBin(this.ffmpeg, ['-hide_banner', '-version'], { timeoutMs: 20000 });
@@ -227,19 +256,74 @@ export class VideoStudio {
    *   sapi  = Windows 自带语音（**不需要任何文件**，只填语音名）
    *   piper = 本地 .onnx 语音模型（自定义音色，需要 exe + 模型文件）
    */
-  async tts({ text, out, voice, rate, engine } = {}) {
-    const au = this.videoCfg?.audio ?? {};
+  async tts({ text, lines, out, voice, rate, engine, lengthScaleOverride } = {}) {
+    const au = { ...(this.videoCfg?.audio ?? {}) };
+    if (Number.isFinite(Number(lengthScaleOverride))) au.lengthScale = Number(lengthScaleOverride);
+
+    // 「萝莉 + 有人味」模式：分段合成 + 停顿/喘气/口吃 + 升调。
+    // 它需要 piper 模型，不消耗 SAPI 合成。
+    // 只有"没有显式指定 sapi"时才走萝莉合成器，否则尊重调用方选择的引擎
+    const wantCute = au.cute && au.piperExe && au.piperModel && engine !== 'sapi' && !voice;
+    if (wantCute) {
+      const { synthCute } = await import('./synth-cute.mjs');
+      const target = out || path.join(this.workDir(), `cute-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.wav`);
+      const r = await synthCute(
+        { ffmpeg: this.ffmpeg, ffprobe: this.ffprobe },
+        {
+          text,
+          // 一句一行传进去：每句单独合成，时间轴才能和字幕严格 1:1（否则必然越来越不同步）
+          lines: Array.isArray(lines) ? lines : undefined,
+          out: target,
+          workDir: path.join(this.workDir(), 'cute-work'),
+          piperExe: au.piperExe,
+          piperModel: au.piperModel,
+          preset: au.cute,
+          // 口吃/喘气改成"显式打开才用"：默认关，因为它俩是"声音诡异"的主要来源
+          stutter: au.stutter === true,
+          breath: au.breath === true,
+          pause: au.pause !== false,
+          lengthScale: au.lengthScale ?? 1.12,
+          // 目标时长交给合成器：句间停顿均摊补足，别在结尾堆静音
+          targetSec: Number(this.videoCfg?.targetDurationSec) || 0
+        }
+      );
+      const info = await this.probe(r.out);
+      return {
+        file: r.out, engine: 'cute', cutePreset: r.preset, pitch: r.pitch,
+        bytes: info.sizeBytes, durationSec: info.durationSec,
+        timeline: r.timeline ?? null   // 每句真实起止，供字幕对齐
+      };
+    }
     const result = await synthesize({
       engine: engine || au.engine || 'sapi',
       text,
-      out: out || path.join(this.workDir(), `tts-${Date.now()}.wav`),
+      out: out || path.join(this.workDir(), `tts-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.wav`),
       voice: voice ?? au.voice,
       rate: rate ?? au.rate ?? 0,
       exe: au.piperExe,
       model: au.piperModel
     });
+    // 柔化：用 ffmpeg 滤镜降调 + 削齿音 + 加厚度（配置 video.audio.soften）
+    const preset = this.videoCfg?.audio?.soften;
+    let softened = null;
+    if (preset && preset !== 'none' && this.available) {
+      try {
+        const { softenAudio } = await import('./voice-soften.mjs');
+        const out2 = result.file.replace(/\.wav$/, `-soft${preset}.wav`);
+        const r = softenAudio(
+          { ffmpeg: this.ffmpeg, ffprobe: this.ffprobe },
+          { input: result.file, out: out2, preset }
+        );
+        softened = { preset, file: r.out };
+        this._tmpFiles.push(out2);
+        result.file = out2;
+      } catch (error) {
+        this.log?.(`[voice-soften] 跳过：${error.message}`);
+      }
+    }
+
     const info = await this.probe(result.file);
-    return { ...result, ...info };
+    return { ...result, ...info, softenPreset: softened?.preset ?? 'none' };
   }
 
   /** 列出可用语音（给 ks_voice_list 用）。 */
@@ -260,14 +344,22 @@ export class VideoStudio {
   async normalize({ input, out, durSec = 0, width = 1080, height = 1920, fps = 30, fit = 'cover' } = {}) {
     this.assertAvailable();
     if (!fs.existsSync(input)) throw new VideoError(`输入不存在：${input}`);
-    const target = out ? path.resolve(out) : path.join(this.workDir(), `norm-${Date.now()}.mp4`);
+    const target = out ? path.resolve(out) : path.join(this.workDir(), `norm-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.mp4`);
+    // gif 单独处理：它既能当图片又能当动图，而且这个 ffmpeg 的 image2 不认 -loop
+    const isGif = /\.gif$/i.test(input);
     const isImage = /\.(png|jpe?g|webp|bmp)$/i.test(input);
     const vf = fit === 'contain'
       ? `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=${fps}`
       : `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},setsar=1,fps=${fps}`;
     const args = ['-hide_banner', '-y'];
-    if (isImage) args.push('-loop', '1', '-t', String(Math.max(1, durSec || 3)), '-i', input);
-    else args.push('-i', input);
+    if (isGif) {
+      // 动图当输入：-loop 1 在这个 ffmpeg 的 image2 上会报 "Option loop not found"，改用 -stream_loop
+      args.push('-stream_loop', '-1', '-t', String(Math.max(1, durSec || 3)), '-i', input);
+    } else if (isImage) {
+      args.push('-loop', '1', '-t', String(Math.max(1, durSec || 3)), '-i', input);
+    } else {
+      args.push('-i', input);
+    }
     args.push(
       '-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
       '-shortest',
@@ -285,7 +377,7 @@ export class VideoStudio {
     this.assertAvailable();
     const list = (files ?? []).filter((f) => fs.existsSync(f));
     if (list.length === 0) throw new VideoError('concat 需要至少一个已存在的文件');
-    const target = out ? path.resolve(out) : path.join(this.workDir(), `concat-${Date.now()}.mp4`);
+    const target = out ? path.resolve(out) : path.join(this.workDir(), `concat-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.mp4`);
     const listFile = `${target}.txt`;
     fs.writeFileSync(listFile, list.map((f) => `file '${f.replace(/\\/g, '/').replace(/'/g, "'\\''")}'`).join('\n'), 'utf8');
     await runBin(this.ffmpeg, ['-hide_banner', '-y', '-f', 'concat', '-safe', '0', '-i', listFile, '-c', 'copy', target]);
@@ -303,7 +395,7 @@ export class VideoStudio {
     const font = pickFont(fontPath || this.videoCfg?.typography?.fontPath || this.videoCfg?.fontPath);
     if (!font) throw new VideoError('找不到中文字体：写 config.json 的 video.fontPath（例如 C:/Windows/Fonts/msyh.ttc）');
     const dir = this.workDir();
-    const target = out ? path.resolve(out) : path.join(dir, `sub-${Date.now()}.mp4`);
+    const target = out ? path.resolve(out) : path.join(dir, `sub-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.mp4`);
     const temps = [];   // 每个字幕一个 textfile，渲染完必须删，否则越攒越多
     const chain = [];
     (items ?? []).forEach((it, i) => {
@@ -339,7 +431,7 @@ export class VideoStudio {
   async muxAudio({ input, out, voiceFile = '', bgmFile = '', bgmGainDb = -22, voiceGainDb = 0 } = {}) {
     this.assertAvailable();
     if (!voiceFile && !bgmFile) return { file: input, ...(await this.probe(input)) };
-    const target = out ? path.resolve(out) : path.join(this.workDir(), `audio-${Date.now()}.mp4`);
+    const target = out ? path.resolve(out) : path.join(this.workDir(), `audio-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.mp4`);
     const args = ['-hide_banner', '-y', '-i', input];
     if (voiceFile) args.push('-i', voiceFile);
     if (bgmFile) args.push('-stream_loop', '-1', '-i', bgmFile);
@@ -369,7 +461,7 @@ export class VideoStudio {
   /** 从视频抽一帧当封面。 */
   async cover({ input, out, atSec = 1 } = {}) {
     this.assertAvailable();
-    const target = out ? path.resolve(out) : path.join(this.workDir(), `cover-${Date.now()}.jpg`);
+    const target = out ? path.resolve(out) : path.join(this.workDir(), `cover-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.jpg`);
     await runBin(this.ffmpeg, ['-hide_banner', '-y', '-ss', String(Math.max(0, atSec)), '-i', input, '-frames:v', '1', '-q:v', '2', target]);
     return { file: target, ...(await this.probe(target)) };
   }
@@ -555,9 +647,255 @@ export class VideoStudio {
     // ── 画幅 ──
     width,
     height,
-    fps
+    fps,
+    // ── 模板 / 表情 ──
+    template,
+    templateBox,
+    sticker,
+    stickerSize
   } = {}) {
     this.assertAvailable();
+
+    // ── 模板模式 ──
+    // 设置里指了一张横版模板图（带说话框）时，用 renderTemplateVideo：
+    // 背景=模板自身模糊放大、只往框里打字、左侧可贴表情。
+    {
+      const { renderTemplateVideo } = await import('./render-template.mjs');
+      const au = this.videoCfg?.audio ?? {};
+      const bgCfg = this.videoCfg?.background ?? {};
+      const tplFile = template || bgCfg.template || (
+        bgCfg.image && /\.(jpg|jpeg|png|webp)$/i.test(bgCfg.image) &&
+        (this.videoCfg?.templateMode === true || bgCfg.fit === 'contain' && (this.videoCfg?.templateBox || bgCfg.templateBox))
+          ? bgCfg.image : ''
+      );
+      const box = templateBox || bgCfg.templateBox || this.videoCfg?.templateBox;
+      if (tplFile && box) {
+        // 先合成配音
+        let voiceTimeline = null;
+        let voiceFile = '';
+        if (voiceText) {
+          const targetSec = Number(this.videoCfg?.targetDurationSec) || 0;
+          const voiceOut = () => path.join(this.workDir(), `tpl-voice-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.wav`);
+          let vres = await this.tts({ text: voiceText, lines, out: voiceOut() });
+          // 配音比目标短很多 → 放慢语速重合成（比在结尾补 20 秒静音自然得多）
+          if (targetSec && vres.durationSec && vres.durationSec < targetSec * 0.9 && au.cute) {
+            let scale = Number(this.videoCfg?.audio?.lengthScale ?? 1.12);
+            for (let i = 0; i < 3; i++) {
+              const need = targetSec / vres.durationSec;
+              scale = Math.min(2.2, Math.max(1.0, scale * Math.min(1.5, need)));
+              const retry = await this.tts({ text: voiceText, lines, out: voiceOut(), lengthScaleOverride: scale }).catch(() => null);
+              if (!retry) break;
+              vres = retry;
+              if (vres.durationSec >= targetSec * 0.9) break;
+            }
+          }
+          voiceFile = vres.file;
+          voiceTimeline = vres.timeline ?? null;
+        }
+        const target = out ? path.resolve(out) : path.join(this.workDir(), `tpl-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.mp4`);
+        // 贴纸：位置/大小用预设，多张时按文案情绪自动挑
+        const { STICKER_POSITIONS, STICKER_SIZES, detectEmotion, pickSticker, scanStickerFiles, loadStickerEmotions } = await import('./sticker.mjs');
+        const posKey = au.stickerPos ?? 'beside-box';
+        const posPreset = { ...(STICKER_POSITIONS[posKey] ?? STICKER_POSITIONS['beside-box']) };
+        // "字幕框左边"交给渲染器算（它才知道画布上的真实框坐标）
+        const stickerAnchor = posKey === 'beside-box' ? 'box' : '';
+        const sizePreset = STICKER_SIZES[au.stickerSizeName] ?? STICKER_SIZES.medium;
+        const emotion = detectEmotion([...(lines || []), voiceText || ''].join(' '));
+        let resolvedSticker = { file: '', x: posPreset.x, y: posPreset.y, scale: sizePreset.scale, emotion };
+        // 先算每句字幕的起止（配音真实时间轴；条数不一致按字数铺满）
+        const preSpans = await (async () => {
+          let audioDur = 0;
+          try {
+            const pv = await this.probe(voiceFile);
+            audioDur = Number(pv?.durationSec ?? 0) || 0;
+          } catch {}
+          const minD = Number(this.videoCfg?.targetDurationSec ?? this.videoCfg?.minDurationSec) || 0;
+          const total = Math.max(audioDur, minD, 1);
+          if (voiceTimeline && voiceTimeline.length === lines.length) {
+            const sp = voiceTimeline.map((t) => ({ start: t.start, end: t.end }));
+            if (sp.length) sp[sp.length - 1].end = Math.max(sp[sp.length - 1].end, total);
+            return sp;
+          }
+          const weights = lines.map((l) => Math.max(2, String(l).length));
+          const sum = weights.reduce((a, b) => a + b, 0);
+          let acc = 0;
+          return lines.map((_, i) => {
+            const d = (weights[i] / sum) * total;
+            const s0 = acc;
+            acc += d;
+            return { start: Number(s0.toFixed(2)), end: Number(acc.toFixed(2)) };
+          });
+        })();
+
+        // 中途换表情：每一句按自己的情绪挑一张（连续相同只保留一个时间段）
+        let stickerPlan = null;
+        if (process.env.KSOPS_NO_STICKER === '1') {   // 调试用：临时不贴表情
+          stickerPlan = null;
+        } else {
+        {
+          const allFiles = scanStickerFiles(projectRoot());
+          const emoMap = loadStickerEmotions(projectRoot());
+          const perLine = au.stickerPerLine !== false;
+          if (perLine && !au.stickerFile && allFiles.length && lines && lines.length) {
+            const plan = [];
+            // 平淡句没有情绪可配 → 轮换，保证表情会变
+            const calmFiles = allFiles.filter((f) => (emoMap[path.basename(f)] ?? '') === 'calm');
+            const rotatePool = calmFiles.length >= 2 ? calmFiles : allFiles;
+            let rot = 0;
+            let prevFile = '';
+
+            lines.forEach((line, i) => {
+              const emo = detectEmotion(String(line));
+              let pickedFile = '';
+              if (emo === 'calm') {
+                // 轮换，跳过和上一句相同的那张
+                for (let k = 0; k < rotatePool.length; k++) {
+                  const cand = rotatePool[(rot + k) % rotatePool.length];
+                  if (cand !== prevFile) { pickedFile = cand; rot = (rot + k + 1) % rotatePool.length; break; }
+                }
+                if (!pickedFile) pickedFile = rotatePool[0];
+              } else {
+                pickedFile = pickSticker({ emotion: emo, files: allFiles, mapping: emoMap }).file;
+              }
+              const picked = { file: pickedFile };
+              if (!picked.file) return;
+              const span = preSpans[i] || null;
+              const last = plan[plan.length - 1];
+              if (last && last.file === picked.file) {
+                // 同一张：延长上一段
+                if (span) last.end = Math.max(last.end, span.end);
+                return;
+              }
+              prevFile = picked.file;
+              plan.push({
+                file: path.resolve(projectRoot(), picked.file),
+                emotion: emo,
+                start: span ? span.start : 0,
+                end: span ? span.end : 0
+              });
+            });
+            if (plan.length) {
+              // 让每段覆盖到下一段开始（避免中间空档）
+              for (let i = 0; i < plan.length; i++) {
+                const next = plan[i + 1];
+                plan[i].end = Math.max(plan[i].end, next ? next.start : 0);
+              }
+              stickerPlan = plan;
+            }
+          }
+        }
+        }
+        {
+          const all = scanStickerFiles(projectRoot());
+          resolvedSticker.candidates = all.length;
+          if (au.stickerFile) {
+            // 显式指定优先
+            resolvedSticker.file = au.stickerFile;
+          } else if (au.stickerAutoEmotion !== false && all.length) {
+            resolvedSticker.file = pickSticker({ emotion, files: all, mapping: loadStickerEmotions(projectRoot()) }).file;
+          }
+          // 坐标微调支持两种字段名（stickerX / stickerX2 都认）
+          const px = Number.isFinite(Number(au.stickerX2)) ? Number(au.stickerX2) : Number(au.stickerX);
+          const py = Number.isFinite(Number(au.stickerY2)) ? Number(au.stickerY2) : Number(au.stickerY);
+          if (Number.isFinite(px)) { resolvedSticker.x = px; resolvedSticker.explicitX = true; }
+          if (Number.isFinite(py)) { resolvedSticker.y = py; resolvedSticker.explicitY = true; }
+          if (Number.isFinite(Number(au.stickerScale))) resolvedSticker.scale = Number(au.stickerScale);
+          // 相对路径补成绝对
+          if (resolvedSticker.file && !resolvedSticker.file.match(/^[a-zA-Z]:|^\//)) {
+            resolvedSticker.file = path.resolve(projectRoot(), resolvedSticker.file);
+          }
+        }
+
+        // 打印实际用的模板与贴纸：排"为什么画面跟素材不一样"时全靠这一行
+        try {
+          const st = fs.statSync(tplFile);
+          this.log?.(`[template] ${tplFile} (${st.size}B, ${st.mtime.toISOString()})`);
+          this.log?.(`[sticker] plan=${Array.isArray(stickerPlan) ? stickerPlan.length : 0} file=${resolvedSticker.file || '(none)'}`);
+          if (Array.isArray(stickerPlan) && stickerPlan[0]) {
+            const p0 = stickerPlan[0];
+            this.log?.(`[sticker:0] ${JSON.stringify({ file: path.basename(p0.file || ''), start: p0.start, end: p0.end, scale: p0.scale })}`);
+          }
+        } catch {}
+
+        const r = renderTemplateVideo(
+          { ffmpeg: this.ffmpeg, ffprobe: this.ffprobe },
+          {
+            template: tplFile,
+            out: target,
+            workDir: path.join(this.workDir(), 'tmpl-work'),
+            width: width ?? 1080,
+            height: height ?? 1920,
+            font: pickFont(fontPath || this.videoCfg?.typography?.fontPath),
+            lines,
+            voiceFile,
+            timings: preSpans,
+            box,
+            stickerText: sticker ?? au.sticker ?? '',
+            stickerSize: stickerSize ?? au.stickerSize ?? 0.22,
+            stickerFile: resolvedSticker.file,
+            stickerX: resolvedSticker.explicitX ? resolvedSticker.x : null,
+            stickerY: resolvedSticker.explicitY ? resolvedSticker.y : null,
+            stickerAnchor,
+            stickerScale: resolvedSticker.scale,
+            stickerEmotion: resolvedSticker.emotion,
+            stickerPlan,
+            stickerKey: au.stickerKey ?? 'auto',
+            minDurationSec: Number(this.videoCfg?.targetDurationSec ?? this.videoCfg?.minDurationSec) || 0,
+            stickerTrim: Number(au.stickerTrim ?? 0.02),
+            // 背景留白怎么填：>0 = 同一张图放大后模糊（sigma 就是这个值）+ 压暗；0 = 纯渐变
+            bgBlur: Math.max(0, Number(bgCfg.blur ?? bgBlur ?? 0) || 0),
+            bgDim: Math.min(1, Math.max(0, Number(bgCfg.dim ?? bgDim ?? 0) || 0)),
+            // 参考视频学来的装饰（栏目名 / AI 标识 / 名字标签 / 打字光标）
+            titleBar: this.videoCfg?.titleBar ?? '',
+            aiBadge: this.videoCfg?.aiBadge ?? '',
+            speakerName: this.videoCfg?.speakerName ?? '',
+            typing: this.videoCfg?.typing !== false
+          }
+        );
+        const info = await this.probe(r.file);
+        const cover = await this.cover({ input: r.file, out: path.join(this.workDir(), `cover-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.jpg`) }).catch(() => ({ file: '' }));
+        // 配音时长也要带上（MCP 层会读它），字幕给一个按总时长均分的结构
+        let voiceInfo = null;
+        if (voiceFile) {
+          const vp = await this.probe(voiceFile).catch(() => null);
+          voiceInfo = { file: voiceFile, durationSec: vp?.durationSec ?? 0 };
+        }
+        const total = Number(info.durationSec ?? 0);
+        // 有语音时间轴就按真实时间对齐（否则字幕会和声音错位）
+        let subtitles;
+        if (voiceTimeline && voiceTimeline.length === lines.length) {
+          // 条数一致：直接用真实时间
+          subtitles = voiceTimeline.map((t) => ({ text: t.text, start: t.start, end: t.end }));
+        } else if (voiceTimeline && voiceTimeline.length) {
+          // 条数不一致：按每个 line 的字符数比重，把整段语音时长切开
+          const weights = lines.map((l) => Math.max(2, String(l).length));
+          const sum = weights.reduce((a, b) => a + b, 0);
+          let acc = 0;
+          subtitles = lines.map((text, i) => {
+            const d = (weights[i] / sum) * total;
+            const s0 = acc;
+            acc += d;
+            return { text, start: Number(s0.toFixed(2)), end: Number(acc.toFixed(2)) };
+          });
+        } else {
+          const per = lines.length ? total / lines.length : total;
+          subtitles = lines.map((text, i) => ({
+            text,
+            start: Number((i * per).toFixed(2)),
+            end: Number(((i + 1) * per).toFixed(2))
+          }));
+        }
+        return {
+          file: r.file, cover: cover.file, durationSec: total,
+          sizeBytes: info.sizeBytes, width: info.width, height: info.height,
+          mode: 'template', template: r.template, box: r.box, lines, subtitles,
+          sticker: r.sticker ? { ...r.sticker, emotion: resolvedSticker.emotion, keptPosition: resolvedSticker } : { emotion: resolvedSticker.emotion, file: '' },
+          stickerPlanReport: r.plan ?? [],
+          voice: voiceInfo
+        };
+      }
+    }
+
     const style = this.resolveStyle({
       bgColor, bgImage, bgVideo, bgFit, bgDim, bgBlur,
       bgGradientFrom, bgGradientTo, bgGradientAxis, bgPreset, background,
@@ -634,6 +972,7 @@ export class VideoStudio {
     for (const f of [baseFile, subbed.file]) if (f && f !== finalOut) fs.rmSync(f, { force: true });
 
     this.flushTemps();
+    this.pruneWorkDir();
 
     return {
       file: muxed.file,

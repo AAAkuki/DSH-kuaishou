@@ -8,7 +8,8 @@ function W($m) {
 }
 Set-Content -Path $LOG -Value '' -Encoding utf8
 W "restart-only started (pid=$PID)"
-Start-Sleep -Seconds 10
+# 给自己留出把话说完的时间：本轮回答要在进程被杀之前发出去
+Start-Sleep -Seconds 20
 
 $procs = @(Get-Process -Name 'DeepSeek Harness' -ErrorAction SilentlyContinue)
 W ("killing " + $procs.Count + " procs: " + (($procs | ForEach-Object { $_.Id }) -join ','))
@@ -47,5 +48,12 @@ for ($i = 0; $i -lt 20; $i++) {
     } catch { }
 }
 if (-not $envOk) { W 'env endpoint not reachable after restart (upload server 未起来?)' }
+
+# 顺手验一次「思维链 + 停止」这两条链路（3.23.0 修的东西）
+W 'verifying /autopilot/trace + /autopilot/stop ...'
+try {
+    $out = & node 'C:\Users\wudiw\Documents\deepseek\kuaishou-ops\test\verify-trace-stop-live.mjs' 32801 2>&1
+    foreach ($l in @($out)) { W ("verify: " + $l) }
+} catch { W ("verify failed: " + $_.Exception.Message) }
 
 W 'done — reopen DeepSeek Harness'

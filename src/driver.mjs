@@ -31,6 +31,11 @@ export class AdbBackend {
   async feedScroll(opts) { return await this.ks.feedScroll(opts); }
   async like() { return await this.ks.like(); }
 
+  /** autopilot / runPlan 都叫 readComments，这里做别名。 */
+  async readComments({ limit = 50 } = {}) {
+    return await this.comments({ keepOpen: false, limit });
+  }
+
   async comments({ keepOpen = false, limit = 50 } = {}) {
     await this.ks.ensureForeground();
     await this.ks.openComments();
@@ -40,9 +45,18 @@ export class AdbBackend {
   }
 
   async reply({ match, content, openPanel = true }) { return await this.ks.replyToComment({ match, content, openPanel }); }
+  async replyWithSticker(opts = {}) { return await this.ks.replyWithSticker(opts); }
 
-  async publish({ file, caption = '', pushOnly = false }) {
-    return await this.ks.publishVideo({ file, caption, dryPushOnly: pushOnly });
+  async publish({ file, caption = '', pushOnly = false, topics = [], title = '' } = {}) {
+    // adb 后端走 App 发布界面，话题/封面需要额外 UI 操作，暂不支持——返回里说明，别静默丢
+    const result = await this.ks.publishVideo({ file, caption, dryPushOnly: pushOnly });
+    return {
+      ...result,
+      topicsSupported: false,
+      note: topics.length || title
+        ? 'adb 后端暂不支持自动填话题/标题/封面（网页版支持）'
+        : result.note
+    };
   }
 
   async screenshot() {
@@ -69,6 +83,16 @@ export class WebBackend {
   async feedScroll(opts) { return await this.web.feedScroll(opts); }
   async like() { return await this.web.like(); }
 
+  /** autopilot / runPlan 都叫 readComments，这里做别名（之前缺了 → "b.readComments is not a function"）。 */
+  async readComments({ limit = 50 } = {}) {
+    return await this.comments({ keepOpen: false, limit });
+  }
+  async postComment(opts = {}) { return await this.web.postComment(opts); }
+  async readVideoTags() { return await this.web.readVideoTags(); }
+  async listOwnWorks(opts = {}) { return await this.web.listOwnWorks(opts); }
+  async openOwnWork(opts = {}) { return await this.web.openOwnWork(opts); }
+  async readSubReplies(opts = {}) { return await this.web.readSubReplies(opts); }
+
   async comments({ keepOpen = false, limit = 50 } = {}) {
     const list = await this.web.readComments({ limit });
     if (!keepOpen) await this.web.closeComments();
@@ -76,14 +100,25 @@ export class WebBackend {
   }
 
   async reply({ match, content, openPanel = true }) { return await this.web.replyToComment({ match, content, openPanel }); }
-  async publish({ file, caption = '', pushOnly = false }) {
+  async replyWithSticker(opts = {}) { return await this.web.replyWithSticker(opts); }
+  /**
+   * agent 模式（自己一条条刷）：必须在这里转发，否则 ks_watch / ks_next 会报
+   * "当前后端不支持单条观看" —— 之前漏了这两个转发，agent 模式等于不可用。
+   */
+  async watchCurrent(opts = {}) { return await this.web.watchCurrent(opts); }
+  async nextVideo() { return await this.web.nextVideo(); }
+  async currentVideo() { return await this.web.currentVideo(); }
+  async publish({ file, caption = '', pushOnly = false, cover = '', topics = [], title = '', retries = 1 } = {}) {
     if (pushOnly) {
       // 网页版没有"只推文件"这一步：上传即发布，必须明确拒绝，不能默默发出去
       throw new Error('网页版后端的 pushOnly 不支持（它走创作者平台直传，没有"先推后发"）。要去掉 pushOnly，或把 mode 切成 adb');
     }
-    return await this.web.publishVideo({ file, caption });
+    return await this.web.publishVideo({ file, caption, cover, topics, title, retries });
   }
   async screenshot({ file } = {}) { return await this.web.screenshot({ file }); }
+  /** 收拾标签页（关掉 about:blank 和重复页），对外暴露给 MCP 用。 */
+  async tidy() { return await (this.web.tidyTabs ? this.web.tidyTabs() : { closed: 0 }); }
+
   async close() { await this.web.close(); }
 }
 

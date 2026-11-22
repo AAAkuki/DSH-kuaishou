@@ -12,13 +12,16 @@ const fakeReact = {
   createElement: (type, props, children) => ({ type, props, children }),
   useState: (v) => [v, () => {}],
   useEffect: () => {},
-  useCallback: (fn) => fn
+  useCallback: (fn) => fn,
+  useRef: (v) => ({ current: v })
 };
 const sandbox = {
   window: { __ModuleLoader__: { load: (def) => { captured = def; } } },
   console,
   fetch: async () => ({ ok: true, text: async () => '{}' }),
   setTimeout,
+  setInterval,
+  clearInterval,
   Math
 };
 vm.createContext(sandbox);
